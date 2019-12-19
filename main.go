@@ -77,7 +77,9 @@ func main() {
 
 	fmt.Printf(`dry_run: %t
 gateway_url: %s
-inactivity_duration: %s `, dryRun, config.GatewayURL, config.InactivityDuration)
+inactivity_duration: %s
+reconcile_interval: %s
+`, dryRun, config.GatewayURL, config.InactivityDuration, config.ReconcileInterval)
 
 	if len(config.GatewayURL) == 0 {
 		fmt.Println("gateway_url (faas-netes/faas-swarm) is required.")
@@ -107,7 +109,8 @@ func buildMetricsMap(client *http.Client, functions []requests.Function, config 
 	// duration := "5m"
 
 	for _, function := range functions {
-		querySt := url.QueryEscape(`sum(rate(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])) by (code, function_name)`)
+		querySt := url.QueryEscape(`sum(rate(function_requests_started_total{function_name="` + function.Name + `"}[` + duration + `])) by (function_name)`)
+		fmt.Println(querySt)
 
 		res, err := query.Fetch(querySt)
 		if err != nil {
@@ -115,6 +118,7 @@ func buildMetricsMap(client *http.Client, functions []requests.Function, config 
 			continue
 		}
 
+		log.Println(res, function.InvocationCount)
 		if len(res.Data.Result) > 0 || function.InvocationCount == 0 {
 
 			if _, exists := metrics[function.Name]; !exists {
