@@ -288,59 +288,32 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 	// double confirm for the sake of 15 second scrape buffering
 	for _, function := range functions {
-		fmt.Println("")
-		fmt.Println("")
-		fmt.Println("")
-		fmt.Printf("Next function\t%v\n", function.Name)
-		firstCheck := scaleCriteria(client, function, config, credentials)
 
-		fmt.Println("------------------------\tFIRST round check\t", firstCheck)
-		fmt.Println("sleep 15 seconds .....")
-		fmt.Println("...")
-		time.Sleep(time.Second * 15)
+		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
 
-		secondCheck := scaleCriteria(client, function, config, credentials)
-		fmt.Println("------------------------\tSECOND round check\t", secondCheck)
+			fmt.Println("")
+			fmt.Println("")
+			fmt.Println("")
+			fmt.Printf("Next function\t%v\n", function.Name)
+			firstCheck := scaleCriteria(client, function, config, credentials)
 
-		if firstCheck == float64(0) && secondCheck == float64(0) {
-			fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
-			if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-				sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+			fmt.Println("------------------------\tFIRST round check\t", firstCheck)
+			fmt.Println("sleep 15 seconds .....")
+			fmt.Println("...")
+			time.Sleep(time.Second * 15)
+
+			secondCheck := scaleCriteria(client, function, config, credentials)
+			fmt.Println("------------------------\tSECOND round check\t", secondCheck)
+
+			if firstCheck == float64(0) && secondCheck == float64(0) {
+				fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
+				if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
+					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+				}
 			}
-		}
+		}(client, function, config, credentials)
+
 	}
-
-	// metrics := buildMetricsMap(client, functions, config)
-
-	// for _, fn := range functions {
-
-	// 	if fn.Labels != nil {
-	// 		labels := *fn.Labels
-	// 		labelValue := labels[scaleLabel]
-
-	// 		if labelValue != "1" && labelValue != "true" {
-	// 			if writeDebug {
-	// 				log.Printf("Skip: %s due to missing label\n", fn.Name)
-	// 			}
-	// 			continue
-	// 		}
-	// 	}
-
-	// 	if v, found := metrics[fn.Name]; found {
-	// 		if v == float64(0) {
-	// 			fmt.Printf("%s\tidle\n", fn.Name)
-
-	// 			if val, _ := getReplicas(client, config.GatewayURL, fn.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-	// 				sendScaleEvent(client, config.GatewayURL, fn.Name, uint64(0), credentials)
-	// 			}
-
-	// 		} else {
-	// 			if writeDebug {
-	// 				fmt.Printf("%s\tactive: %f\n", fn.Name, v)
-	// 			}
-	// 		}
-	// 	}
-	// }
 }
 
 func getReplicas(client *http.Client, gatewayURL string, name string, credentials *Credentials) (*providerTypes.FunctionStatus, error) {
