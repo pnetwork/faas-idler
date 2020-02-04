@@ -76,7 +76,9 @@ func main() {
 
 	fmt.Printf(`dry_run: %t
 gateway_url: %s
-inactivity_duration: %s `, dryRun, config.GatewayURL, config.InactivityDuration)
+inactivity_duration: %s
+reconcile_interval: %s
+`, dryRun, config.GatewayURL, config.InactivityDuration, config.ReconcileInterval)
 
 	if len(config.GatewayURL) == 0 {
 		fmt.Println("gateway_url (faas-netes/faas-swarm) is required.")
@@ -108,6 +110,7 @@ func buildMetricsMap(client *http.Client, functions []providerTypes.FunctionStat
 	for _, function := range functions {
 		querySt := url.QueryEscape(`sum(rate(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])) by (code, function_name)`)
 
+		fmt.Printf(querySt)
 		res, err := query.Fetch(querySt)
 		if err != nil {
 			log.Println(err)
@@ -146,6 +149,135 @@ func buildMetricsMap(client *http.Client, functions []providerTypes.FunctionStat
 	return metrics
 }
 
+func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) float64 {
+	// skip those w/o the label "com.openfaas.scale.zero=true"
+	if function.Labels != nil {
+		labels := *function.Labels
+		labelValue := labels[scaleLabel]
+
+		if labelValue != "1" && labelValue != "true" {
+			if writeDebug {
+				log.Printf("Skip: %s due to missing label\n", function.Name)
+			}
+			fmt.Println("Not labeled, skip the pod...")
+			return 1
+		}
+	}
+
+	// w/ labels start from here
+	query := metrics.NewPrometheusQuery(config.PrometheusHost, config.PrometheusPort, client)
+	// metrics := make(map[string]float64)
+
+	// rInterval := config.ReconcileInterval.Minutes()
+	// fmt.Printf("ReconcileInterval: %d\n", int(rInterval))
+	duration := fmt.Sprintf("%dm", int(config.InactivityDuration.Minutes()))
+	ivCount := 0.0
+
+	requirement1 := false
+	requirement2 := false
+
+	query1 := url.QueryEscape(`gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}`)
+	res, err := query.Fetch(query1)
+	if err != nil {
+		log.Println(err)
+		return ivCount
+	}
+	fmt.Printf("query1: %v\n", res.Data.Result)
+
+	if len(res.Data.Result) > 0 {
+		invocationValue := res.Data.Result[0].Value[1]
+		fmt.Printf("invocationValue: %v\n", invocationValue)
+		switch invocationValue.(type) {
+		case string:
+			invocationCount, parseErr := strconv.ParseFloat(invocationValue.(string), 64)
+			if parseErr != nil {
+				log.Printf("parseErr\t%v\n", parseErr)
+			}
+			if invocationCount == 1 {
+				requirement1 = true
+			}
+		}
+	}
+	query2 := url.QueryEscape(`count_over_time(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])`)
+
+	res, err = query.Fetch(query2)
+	if err != nil {
+		log.Println(err)
+		return ivCount
+	}
+
+	fmt.Printf("query2: %v\n", res.Data.Result)
+	if len(res.Data.Result) > 0 {
+		scrapeOverTimeValue := res.Data.Result[0].Value[1]
+		fmt.Printf("countOverTimeValue: %v\n", scrapeOverTimeValue)
+		switch scrapeOverTimeValue.(type) {
+		case string:
+			scrapeOverTime, parseErr := strconv.ParseFloat(scrapeOverTimeValue.(string), 64)
+			if parseErr != nil {
+				log.Printf("parseErr\t%v\n", parseErr)
+			}
+			// 15 seconds is the scrape interval from Prometheus configuration
+			criteria := config.InactivityDuration.Minutes() * 60 / 15
+			fmt.Printf("criteria: %v\n", criteria)
+			if scrapeOverTime < criteria {
+				fmt.Println("First time spawned, don't kill it!")
+				return 1 // >0 don't terminate it!
+			} else if scrapeOverTime == criteria {
+				requirement2 = true
+			}
+		}
+	}
+
+	// First spawned and idle for three minutes. can be scaled to zero
+	if requirement1 && requirement2 {
+		fmt.Println("First time spawned but idled 3 minutes, kill it!")
+		return 0
+	}
+
+	// Normal case
+	fmt.Println("Normal cases going on ... ")
+	querySt := url.QueryEscape(`sum(rate(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])) by (code, function_name)`)
+
+	res, err = query.Fetch(querySt)
+	if err != nil {
+		log.Println(err)
+		return ivCount
+	}
+
+	if len(res.Data.Result) > 0 || function.InvocationCount == 0 {
+		// fmt.Printf("function.Name\t%v\n", function.Name)
+		fmt.Printf("res.Data.Result: %v\n", res.Data.Result)
+		fmt.Printf("InvocationCount: %v\n", function.InvocationCount)
+
+		for _, v := range res.Data.Result {
+
+			if writeDebug {
+				fmt.Println(v)
+			}
+
+			if v.Metric.FunctionName == function.Name {
+				metricValue := v.Value[1]
+
+				switch metricValue.(type) {
+				case string:
+
+					f, strconvErr := strconv.ParseFloat(metricValue.(string), 64)
+					if strconvErr != nil {
+						log.Printf("Unable to convert value for metric: %s\n", strconvErr)
+						continue
+					}
+					fmt.Printf("f\t%v\n", f)
+					ivCount += f
+				}
+			}
+		}
+	}
+
+	// fmt.Printf("ivCount: %v\n", ivCount)
+
+	return ivCount
+}
+
 func reconcile(client *http.Client, config types.Config, credentials *Credentials) {
 	functions, err := queryFunctions(client, config.GatewayURL, credentials)
 
@@ -154,37 +286,59 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 		return
 	}
 
-	metrics := buildMetricsMap(client, functions, config)
+	// double confirm for the sake of 15 second scrape buffering
+	for _, function := range functions {
+		fmt.Println("")
+		fmt.Println("")
+		fmt.Println("")
+		fmt.Printf("Next function\t%v\n", function.Name)
+		firstCheck := scaleCriteria(client, function, config, credentials)
 
-	for _, fn := range functions {
+		fmt.Println("------------------------\tFIRST round check\t", firstCheck)
+		fmt.Println("sleep 15 seconds .....")
+		fmt.Println("...")
+		time.Sleep(time.Second * 15)
 
-		if fn.Labels != nil {
-			labels := *fn.Labels
-			labelValue := labels[scaleLabel]
+		secondCheck := scaleCriteria(client, function, config, credentials)
+		fmt.Println("------------------------\tSECOND round check\t", secondCheck)
 
-			if labelValue != "1" && labelValue != "true" {
-				if writeDebug {
-					log.Printf("Skip: %s due to missing label\n", fn.Name)
-				}
-				continue
-			}
-		}
-
-		if v, found := metrics[fn.Name]; found {
-			if v == float64(0) {
-				fmt.Printf("%s\tidle\n", fn.Name)
-
-				if val, _ := getReplicas(client, config.GatewayURL, fn.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-					sendScaleEvent(client, config.GatewayURL, fn.Name, uint64(0), credentials)
-				}
-
-			} else {
-				if writeDebug {
-					fmt.Printf("%s\tactive: %f\n", fn.Name, v)
-				}
-			}
+		if firstCheck == float64(0) && secondCheck == float64(0) {
+			fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
+			sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 		}
 	}
+
+	// metrics := buildMetricsMap(client, functions, config)
+
+	// for _, fn := range functions {
+
+	// 	if fn.Labels != nil {
+	// 		labels := *fn.Labels
+	// 		labelValue := labels[scaleLabel]
+
+	// 		if labelValue != "1" && labelValue != "true" {
+	// 			if writeDebug {
+	// 				log.Printf("Skip: %s due to missing label\n", fn.Name)
+	// 			}
+	// 			continue
+	// 		}
+	// 	}
+
+	// 	if v, found := metrics[fn.Name]; found {
+	// 		if v == float64(0) {
+	// 			fmt.Printf("%s\tidle\n", fn.Name)
+
+	// 			if val, _ := getReplicas(client, config.GatewayURL, fn.Name, credentials); val != nil && val.AvailableReplicas > 0 {
+	// 				sendScaleEvent(client, config.GatewayURL, fn.Name, uint64(0), credentials)
+	// 			}
+
+	// 		} else {
+	// 			if writeDebug {
+	// 				fmt.Printf("%s\tactive: %f\n", fn.Name, v)
+	// 			}
+	// 		}
+	// 	}
+	// }
 }
 
 func getReplicas(client *http.Client, gatewayURL string, name string, credentials *Credentials) (*providerTypes.FunctionStatus, error) {
