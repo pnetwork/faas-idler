@@ -304,7 +304,9 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 		if firstCheck == float64(0) && secondCheck == float64(0) {
 			fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
-			sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+			if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
+				sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+			}
 		}
 	}
 
