@@ -22,6 +22,7 @@ import (
 )
 
 const scaleLabel = "com.openfaas.scale.zero"
+const prometheusScrapeInterval = 15
 
 var dryRun bool
 
@@ -166,13 +167,8 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 
 	// w/ labels start from here
 	query := metrics.NewPrometheusQuery(config.PrometheusHost, config.PrometheusPort, client)
-	// metrics := make(map[string]float64)
-
-	// rInterval := config.ReconcileInterval.Minutes()
-	// fmt.Printf("ReconcileInterval: %d\n", int(rInterval))
 	duration := fmt.Sprintf("%dm", int(config.InactivityDuration.Minutes()))
 	ivCount := 0.0
-
 	requirement1 := false
 	requirement2 := false
 
@@ -205,8 +201,8 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 		log.Println(err)
 		return ivCount
 	}
-
 	fmt.Printf("query2: %v\n", res.Data.Result)
+
 	if len(res.Data.Result) > 0 {
 		scrapeOverTimeValue := res.Data.Result[0].Value[1]
 		fmt.Printf("countOverTimeValue: %v\n", scrapeOverTimeValue)
@@ -217,11 +213,11 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 				log.Printf("parseErr\t%v\n", parseErr)
 			}
 			// 15 seconds is the scrape interval from Prometheus configuration
-			criteria := config.InactivityDuration.Minutes() * 60 / 15
+			criteria := config.InactivityDuration.Minutes() * 60 / prometheusScrapeInterval
 			fmt.Printf("criteria: %v\n", criteria)
 			if scrapeOverTime < criteria {
 				fmt.Println("First time spawned, don't kill it!")
-				return 1 // >0 don't terminate it!
+				return 1 // > 0: don't terminate it!
 			} else if scrapeOverTime == criteria {
 				requirement2 = true
 			}
@@ -289,44 +285,60 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 	// double confirm for the sake of 15 second scrape buffering
 	for _, function := range functions {
 
-		if function.Name == "appstorecheck" {
+		// if function.Name == "appstorecheck" {
 
-			go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
+		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
+			// fmt.Println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+			// time.Sleep(time.Second * 3)
 
-				realScale := 0
-				for i := 0; i < 2; i++ {
-					fmt.Println("")
-					fmt.Println("")
-					fmt.Println("")
-					fmt.Printf("Next function\t%v\n", function.Name)
-					firstCheck := scaleCriteria(client, function, config, credentials)
+			realScale := 0
+			for i := 0; i < 2; i++ {
+				// fmt.Println("------------------------------------------------------------------------------------------")
+				// fmt.Println("")
+				// fmt.Println("")
+				// fmt.Println("")
+				// fmt.Printf("Next function\t%v\n", function.Name)
+				// fmt.Println("**************** start point ", i)
+				// time.Sleep(time.Second * 5)
+				firstCheck := scaleCriteria(client, function, config, credentials)
 
-					fmt.Println("------------------------\tFIRST round check\t", firstCheck)
-					fmt.Println("sleep 30 seconds .....")
-					fmt.Println("...")
-					time.Sleep(time.Second * 30)
+				// fmt.Println("------------------------\tFIRST round check\t", firstCheck)
+				// fmt.Println("**************** middle point ", i)
+				// fmt.Println("sleep 22 seconds .....")
 
-					secondCheck := scaleCriteria(client, function, config, credentials)
-					fmt.Println("------------------------\tSECOND round check\t", secondCheck)
+				time.Sleep(time.Second * prometheusScrapeInterval)
 
-					if firstCheck == float64(0) && secondCheck == float64(0) {
-						realScale++
-						time.Sleep(time.Second * 2)
-						fmt.Printf("realScale++: %v\n", realScale)
-					}
+				secondCheck := scaleCriteria(client, function, config, credentials)
+				// fmt.Println("------------------------\tSECOND round check\t", secondCheck)
+
+				replicaSize, _ := getReplicas(client, config.GatewayURL, function.Name, credentials)
+				if firstCheck == float64(0) && secondCheck == float64(0) && replicaSize.AvailableReplicas > 0 {
+
+					realScale++
+					// time.Sleep(time.Second * 2)
+					fmt.Printf("realScale++: %v\t%v\n", realScale, function.Name)
+
 				}
 
-				if realScale == 2 {
+				// fmt.Printf("realScale: %v\n", realScale)
+				// fmt.Println("**************** end point ", i)
+				time.Sleep(time.Second * prometheusScrapeInterval)
+
+			}
+
+			if realScale == 2 {
+				if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
 					fmt.Printf("realScale: %v\n", realScale)
 					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
-					if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-						sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
-					}
+					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+				} else {
+					fmt.Println("IGNORE because replicas is 0 -------------------")
 				}
+			}
 
-			}(client, function, config, credentials)
+		}(client, function, config, credentials)
 
-		}
+		// }
 
 	}
 }
