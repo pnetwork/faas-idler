@@ -93,6 +93,20 @@ reconcile_interval: %s
 	}
 }
 
+func testGateway() {
+	curlStr := fmt.Sprintf("http://gateway-metrics:8082/metrics")
+	// curlStr := fmt.Sprintf("http://elasticsearch.marvin:9200")
+	_res, _ := http.Get(curlStr)
+	defer _res.Body.Close()
+	_bytes, _ := ioutil.ReadAll(_res.Body)
+
+	fmt.Printf("responseData: %v\n", string(_bytes))
+
+	// TODO: Parsing metrics
+	// gateway_function_invocation_total{code="200",function_name="sethostsport"} 16
+
+}
+
 func readFile(path string) (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		data, readErr := ioutil.ReadFile(path)
@@ -285,11 +299,16 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 	// double confirm for the sake of 15 second scrape buffering
 	for _, function := range functions {
 
-		// if function.Name == "appstorecheck" {
+		// TODO:
+		// retvalBefore := testGateway()
 
 		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
 			// fmt.Println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 			// time.Sleep(time.Second * 3)
+
+			// TODO: directly check gateway metrics from CURL
+
+			// curl 10.43.225.85:8082/metrics | grep gateway_function_invocation_total | grep balance
 
 			realScale := 0
 			for i := 0; i < 2; i++ {
@@ -330,6 +349,13 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 				if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
 					fmt.Printf("realScale: %v\n", realScale)
 					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
+
+					// TODO:
+					// retval := testGateway()
+					// if retval == retvalBefore {
+					//   sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+					// }
+
 					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				} else {
 					fmt.Println("IGNORE because replicas is 0 -------------------")
@@ -337,8 +363,6 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 			}
 
 		}(client, function, config, credentials)
-
-		// }
 
 	}
 }
