@@ -289,29 +289,44 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 	// double confirm for the sake of 15 second scrape buffering
 	for _, function := range functions {
 
-		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
+		if function.Name == "appstorecheck" {
 
-			fmt.Println("")
-			fmt.Println("")
-			fmt.Println("")
-			fmt.Printf("Next function\t%v\n", function.Name)
-			firstCheck := scaleCriteria(client, function, config, credentials)
+			go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
 
-			fmt.Println("------------------------\tFIRST round check\t", firstCheck)
-			fmt.Println("sleep 15 seconds .....")
-			fmt.Println("...")
-			time.Sleep(time.Second * 15)
+				realScale := 0
+				for i := 0; i < 2; i++ {
+					fmt.Println("")
+					fmt.Println("")
+					fmt.Println("")
+					fmt.Printf("Next function\t%v\n", function.Name)
+					firstCheck := scaleCriteria(client, function, config, credentials)
 
-			secondCheck := scaleCriteria(client, function, config, credentials)
-			fmt.Println("------------------------\tSECOND round check\t", secondCheck)
+					fmt.Println("------------------------\tFIRST round check\t", firstCheck)
+					fmt.Println("sleep 30 seconds .....")
+					fmt.Println("...")
+					time.Sleep(time.Second * 30)
 
-			if firstCheck == float64(0) && secondCheck == float64(0) {
-				fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
-				if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+					secondCheck := scaleCriteria(client, function, config, credentials)
+					fmt.Println("------------------------\tSECOND round check\t", secondCheck)
+
+					if firstCheck == float64(0) && secondCheck == float64(0) {
+						realScale++
+						time.Sleep(time.Second * 2)
+						fmt.Printf("realScale++: %v\n", realScale)
+					}
 				}
-			}
-		}(client, function, config, credentials)
+
+				if realScale == 2 {
+					fmt.Printf("realScale: %v\n", realScale)
+					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
+					if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
+						sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+					}
+				}
+
+			}(client, function, config, credentials)
+
+		}
 
 	}
 }
