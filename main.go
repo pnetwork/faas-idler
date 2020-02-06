@@ -377,9 +377,9 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 			retvalBefore := testGateway(function.Name)
 //			fmt.Println ("Debug)", function.Name, retvalBefore )
 
-			var _output string = ""
+//			var _output string = ""
 
-			realScale := 0
+			ScaleConfirmCount := 0
 			for i := 0; i < 2; i++ {
 				// fmt.Println("------------------------------------------------------------------------------------------")
 				// fmt.Println("")
@@ -402,22 +402,23 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 				replicaSize, _ := getReplicas(client, config.GatewayURL, function.Name, credentials)
 				if firstCheck == float64(0) && secondCheck == float64(0) && replicaSize.AvailableReplicas > 0 {
 
-					realScale++
+					ScaleConfirmCount++
 					// time.Sleep(time.Second * 2)
-					fmt.Printf("realScale++: %v\t%v\n", realScale, function.Name)
+					fmt.Printf("ScaleConfirmCount++: %v\t%v\n", ScaleConfirmCount, function.Name)
 
 				}
 
-				// fmt.Printf("realScale: %v\n", realScale)
+				// fmt.Printf("ScaleConfirmCount: %v\n", ScaleConfirmCount)
 				// fmt.Println("**************** end point ", i)
 				time.Sleep(time.Second * prometheusScrapeInterval)
 
 			}
 
-			if realScale == 2 {
+			if ScaleConfirmCount == 2 {
 				if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-					fmt.Printf("realScale: %v\n", realScale)
-					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
+//					fmt.Printf("ScaleConfirmCount: %v\n", ScaleConfirmCount)
+//					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
+					fmt.Printf("Debug) scale %s to 0 due to ScaleConfirmCount: %v\n", function.Name, ScaleConfirmCount)
 
 					// TODO:
 					retval := testGateway(function.Name)
