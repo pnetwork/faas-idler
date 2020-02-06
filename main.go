@@ -87,9 +87,10 @@ reconcile_interval: %s
 	}
 
 	for {
+		fmt.Println ("===== started =====")
 		reconcile(client, config, &credentials)
 		time.Sleep(config.ReconcileInterval)
-		fmt.Printf("\n")
+//		fmt.Printf("\n")
 	}
 }
 
@@ -358,9 +359,10 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 	functions, err := queryFunctions(client, config.GatewayURL, credentials)
 
 	if err != nil {
-		log.Println(err)
+		log.Println("Warn)", err)
 		return
 	}
+	fmt.Println ("Debug)", "function list fetched")
 
 	// double confirm for the sake of 15 second scrape buffering
 	for _, function := range functions {
@@ -432,10 +434,10 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 //					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				} else {
-//					fmt.Println("Info)", "IGNORE because replicas is 0 -------------------")
+					fmt.Println("Info)", "IGNORE because replicas is 0 -------------------")
 				}
 			} else {
-//				fmt.Println ("Info)", function.Name, "ignored due to ScaleConfirmCount:", ScaleConfirmCount)
+				fmt.Println ("Info)", function.Name, "ignored due to ScaleConfirmCount:", ScaleConfirmCount)
 			}
 
 		}(client, function, config, credentials)
