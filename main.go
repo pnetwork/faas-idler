@@ -155,14 +155,14 @@ func testGateway(functionName string) int {
 		_segs := strings.Split(row, " ")
 		_hits, err := strconv.Atoi(_segs[1])
 		if err != nil {
-			fmt.Println("failed to parse, skip:", _segs[1])
+			fmt.Println("Warn) failed to parse, skip:", _segs[1])
 			continue
 		}
 		// fmt.Println(">", _segs[1], _hits)
 
 		_sum += _hits
 
-		fmt.Println(">", row, "<", strings.HasPrefix(row, "gateway_function_invocation_total"))
+//		fmt.Println(">", row, "<", strings.HasPrefix(row, "gateway_function_invocation_total"))
 	}
 	return _sum
 }
@@ -225,7 +225,7 @@ func buildMetricsMap(client *http.Client, functions []providerTypes.FunctionStat
 }
 
 func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) float64 {
-	fmt.Println ("=====", "Debug)", function.Name, "started", "=====")
+//	fmt.Println ("=====", "Debug)", function.Name, "started", "=====")
 	// skip those w/o the label "com.openfaas.scale.zero=true"
 	if function.Labels != nil {
 		labels := *function.Labels
@@ -235,7 +235,7 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 			if writeDebug {
 				log.Printf("Skip: %s due to missing label\n", function.Name)
 			}
-			fmt.Println("Info)", "Not labeled, skip the pod...")
+//			fmt.Println("Info)", "Not labeled, skip the pod...")
 			return 1
 		}
 	}
@@ -263,7 +263,7 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 		case string:
 			invocationCount, parseErr := strconv.ParseFloat(invocationValue.(string), 64)
 			if parseErr != nil {
-				log.Printf("parseErr\t%v\n", parseErr)
+				log.Printf("Warn) parseErr\t%v\n", parseErr)
 			}
 			if invocationCount == 1 {
 				requirement1 = true
@@ -275,7 +275,7 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 	query2 := url.QueryEscape(`count_over_time(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])`)
 	res, err = query.Fetch(query2)
 	if err != nil {
-		log.Println(err)
+		log.Println("Warn)", err)
 		return ivCount
 	}
 //	fmt.Printf("Debug) query2: %v\n", res.Data.Result)
@@ -287,7 +287,7 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 		case string:
 			scrapeOverTime, parseErr := strconv.ParseFloat(scrapeOverTimeValue.(string), 64)
 			if parseErr != nil {
-				log.Printf("parseErr\t%v\n", parseErr)
+				log.Printf("Warn) parseErr\t%v\n", parseErr)
 			}
 			
 			// 15 seconds is the scrape interval from Prometheus configuration
@@ -295,7 +295,8 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 //			fmt.Printf("Debug) criteria: %v\n", criteria)
 			if scrapeOverTime < criteria {
 //				fmt.Println("Info) First time spawned, don't kill it!")
-				fmt.Println("Info) just spawned, prevent from scaling")
+
+//				fmt.Println("Info) just spawned, prevent from scaling")
 				return 1 // > 0: don't terminate it!
 			} else if scrapeOverTime == criteria {
 				requirement2 = true
@@ -305,17 +306,17 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 
 	// First spawned and idle for three minutes. can be scaled to zero
 	if requirement1 && requirement2 {
-		fmt.Println("Info) First time spawned but idled 3 minutes, kill it!")
+		fmt.Println("Warn) First time spawned but idled 3 minutes, kill it!")
 		return 0
 	}
 
 	// Normal case (the original process)
-	fmt.Println("Normal cases going on ... ")
+//	fmt.Println("Normal cases going on ... ")
 	querySt := url.QueryEscape(`sum(rate(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])) by (code, function_name)`)
 
 	res, err = query.Fetch(querySt)
 	if err != nil {
-		log.Println("Info)", err)
+		log.Println("Warn)", err)
 		return ivCount
 	}
 
@@ -327,7 +328,7 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 		for _, v := range res.Data.Result {
 
 			if writeDebug {
-				fmt.Println(v)
+				fmt.Println("Debug)", v)
 			}
 
 			if v.Metric.FunctionName == function.Name {
@@ -348,7 +349,7 @@ func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, c
 		}
 	}
 
-	fmt.Printf("Info) func: %s, ivCount: %v\n", function.Name, ivCount)
+//	fmt.Printf("Info) func: %s, ivCount: %v\n", function.Name, ivCount)
 
 	return ivCount
 }
@@ -404,7 +405,7 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 					ScaleConfirmCount++
 					// time.Sleep(time.Second * 2)
-					fmt.Printf("ScaleConfirmCount++: %v\t%v\n", ScaleConfirmCount, function.Name)
+//					fmt.Printf("Debug) ScaleConfirmCount++: %v\t%v\n", ScaleConfirmCount, function.Name)
 
 				}
 
@@ -431,8 +432,10 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 //					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				} else {
-					fmt.Println("Info)", "IGNORE because replicas is 0 -------------------")
+//					fmt.Println("Info)", "IGNORE because replicas is 0 -------------------")
 				}
+			} else {
+//				fmt.Println ("Info)", function.Name, "ignored due to ScaleConfirmCount:", ScaleConfirmCount)
 			}
 
 		}(client, function, config, credentials)
