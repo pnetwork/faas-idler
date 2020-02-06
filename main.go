@@ -93,6 +93,8 @@ reconcile_interval: %s
 	}
 }
 
+/*
+ todie
 func testGateway() {
 	curlStr := fmt.Sprintf("http://gateway-metrics:8082/metrics")
 	// curlStr := fmt.Sprintf("http://elasticsearch.marvin:9200")
@@ -105,6 +107,64 @@ func testGateway() {
 	// TODO: Parsing metrics
 	// gateway_function_invocation_total{code="200",function_name="sethostsport"} 16
 
+}
+*/
+
+// restful Get
+func Get(url string) (int, []byte) {
+	_res, _ := http.Get(url)
+	defer _res.Body.Close()
+	_bytes, _ := ioutil.ReadAll(_res.Body)
+	return _res.StatusCode, _bytes
+}
+
+func testGateway(functionName string) int {
+	// TODO: Parsing metrics
+	// gateway_function_invocation_total{code="200",function_name="sethostsport"} 16
+
+	_url := "http://gateway-metrics:8082/metrics"
+//	_url = "http://localhost:8082/metrics"
+	//	fmt.Println(_url)
+
+	_, _dataStr := Get(_url)
+	//	fmt.Println(string(_dataStr))
+	_data := strings.Split(string(_dataStr), "\n")
+
+	var _sum int
+	_sum = 0
+
+	for _, row := range _data {
+		//		fmt.Println(strings.HasPrefix(row, "gateway_function_invocation_total"))
+		// gateway_function_invocation_total{code="200",function_name="sethostsport"} 16
+		// skip the empty
+		if row == "" {
+			continue
+		}
+
+		// skip the lines not started with the target metrics
+		if !strings.HasPrefix(row, "gateway_function_invocation_total") {
+			continue
+		}
+
+		// skip the unmatched functions
+		_match := "function_name=\"" + functionName + "\""
+		if _pos := strings.Index(row, _match); _pos == -1 {
+			continue
+		}
+
+		_segs := strings.Split(row, " ")
+		_hits, err := strconv.Atoi(_segs[1])
+		if err != nil {
+			fmt.Println("failed to parse, skip:", _segs[1])
+			continue
+		}
+		// fmt.Println(">", _segs[1], _hits)
+
+		_sum += _hits
+
+		fmt.Println(">", row, "<", strings.HasPrefix(row, "gateway_function_invocation_total"))
+	}
+	return _sum
 }
 
 func readFile(path string) (string, error) {
@@ -309,6 +369,8 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 			// TODO: directly check gateway metrics from CURL
 
 			// curl 10.43.225.85:8082/metrics | grep gateway_function_invocation_total | grep balance
+			retvalBefore := testGateway(function.Name)
+			fmt.Println ("Debug)", function.Name, retvalBefore )
 
 			realScale := 0
 			for i := 0; i < 2; i++ {
@@ -351,14 +413,17 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
 
 					// TODO:
-					// retval := testGateway()
-					// if retval == retvalBefore {
-					//   sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
-					// }
+					retval := testGateway(function.Name)
+					fmt.Println ("Debug)", function.Name, retvalBefore, " => ", retval )
 
-					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+					if retval == retvalBefore {
+						sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+						fmt.Println ("Info)", function.Name, "scale to 0 due to ", retvalBefore, " = ", retval)
+					}
+
+//					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				} else {
-					fmt.Println("IGNORE because replicas is 0 -------------------")
+					fmt.Println("Info)", "IGNORE because replicas is 0 -------------------")
 				}
 			}
 
