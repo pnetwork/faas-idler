@@ -7,6 +7,14 @@ build:
 push:
 	docker push openfaas/faas-idler:${TAG}
 
+.PHONY: marvin-build
+marvin-build:
+	docker build -t cr-preview.pentium.network/faas-idler:${TAG} .
+
+.PHONY: marvin-push
+marvin-push:
+	docker push cr-preview.pentium.network/faas-idler:${TAG}
+
 .PHONY: ci-armhf-build
 ci-armhf-build:
 	docker build -t openfaas/faas-idler:${TAG}-armhf . -f Dockerfile.armhf
