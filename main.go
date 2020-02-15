@@ -28,6 +28,8 @@ var dryRun bool
 
 var writeDebug bool
 
+var functionTouches = make(map[string]float64)
+
 type Credentials struct {
 	Username string
 	Password string
@@ -87,44 +89,33 @@ reconcile_interval: %s
 	}
 
 	for {
-		fmt.Println ("===== started =====")
+		fmt.Println("===== started =====")
 		reconcile(client, config, &credentials)
+		fmt.Println("ONE ROUND OVER ===================================== ")
 		time.Sleep(config.ReconcileInterval)
-//		fmt.Printf("\n")
 	}
 }
 
-/*
- todie
-func testGateway() {
-	curlStr := fmt.Sprintf("http://gateway-metrics:8082/metrics")
-	// curlStr := fmt.Sprintf("http://elasticsearch.marvin:9200")
-	_res, _ := http.Get(curlStr)
-	defer _res.Body.Close()
-	_bytes, _ := ioutil.ReadAll(_res.Body)
-
-	fmt.Printf("responseData: %v\n", string(_bytes))
-
-	// TODO: Parsing metrics
-	// gateway_function_invocation_total{code="200",function_name="sethostsport"} 16
-
-}
-*/
-
-// restful Get
+// Get RESTful get
 func Get(url string) (int, []byte) {
-	_res, _ := http.Get(url)
+	_res, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("httpGet error\t%v", err)
+	}
 	defer _res.Body.Close()
-	_bytes, _ := ioutil.ReadAll(_res.Body)
+	_bytes, err := ioutil.ReadAll(_res.Body)
+	if err != nil {
+		fmt.Printf("ReadAll error\t%v", err)
+	}
 	return _res.StatusCode, _bytes
 }
 
-func testGateway(functionName string) int {
+func gatewayFunctionInvocationTotal(functionName string) float64 {
 	// TODO: Parsing metrics
 	// gateway_function_invocation_total{code="200",function_name="sethostsport"} 16
 
 	_url := "http://gateway-metrics:8082/metrics"
-//	_url = "http://localhost:8082/metrics"
+	//	_url = "http://localhost:8082/metrics"
 	//	fmt.Println(_url)
 
 	_, _dataStr := Get(_url)
@@ -163,9 +154,9 @@ func testGateway(functionName string) int {
 
 		_sum += _hits
 
-//		fmt.Println(">", row, "<", strings.HasPrefix(row, "gateway_function_invocation_total"))
+		//		fmt.Println(">", row, "<", strings.HasPrefix(row, "gateway_function_invocation_total"))
 	}
-	return _sum
+	return float64(_sum)
 }
 
 func readFile(path string) (string, error) {
@@ -225,136 +216,6 @@ func buildMetricsMap(client *http.Client, functions []providerTypes.FunctionStat
 	return metrics
 }
 
-func scaleCriteria(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) float64 {
-//	fmt.Println ("=====", "Debug)", function.Name, "started", "=====")
-	// skip those w/o the label "com.openfaas.scale.zero=true"
-	if function.Labels != nil {
-		labels := *function.Labels
-		labelValue := labels[scaleLabel]
-
-		if labelValue != "1" && labelValue != "true" {
-			if writeDebug {
-				log.Printf("Skip: %s due to missing label\n", function.Name)
-			}
-//			fmt.Println("Info)", "Not labeled, skip the pod...")
-			return 1
-		}
-	}
-
-	// w/ labels start from here
-	// 1st query for the increasing invocation number
-	query := metrics.NewPrometheusQuery(config.PrometheusHost, config.PrometheusPort, client)
-	duration := fmt.Sprintf("%dm", int(config.InactivityDuration.Minutes()))
-	ivCount := 0.0
-	requirement1 := false
-	requirement2 := false
-
-	query1 := url.QueryEscape(`gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}`)
-	res, err := query.Fetch(query1)
-	if err != nil {
-		log.Println(err)
-		return ivCount
-	}
-//	fmt.Printf("Debug) query1: %v\n", res.Data.Result)
-
-	if len(res.Data.Result) > 0 {
-		invocationValue := res.Data.Result[0].Value[1]
-//		fmt.Printf("Debug) invocationValue: %v\n", invocationValue)
-		switch invocationValue.(type) {
-		case string:
-			invocationCount, parseErr := strconv.ParseFloat(invocationValue.(string), 64)
-			if parseErr != nil {
-				log.Printf("Warn) parseErr\t%v\n", parseErr)
-			}
-			if invocationCount == 1 {
-				requirement1 = true
-			}
-		}
-	}
-
-	// 2nd query for the count of invocation number
-	query2 := url.QueryEscape(`count_over_time(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])`)
-	res, err = query.Fetch(query2)
-	if err != nil {
-		log.Println("Warn)", err)
-		return ivCount
-	}
-//	fmt.Printf("Debug) query2: %v\n", res.Data.Result)
-
-	if len(res.Data.Result) > 0 {
-		scrapeOverTimeValue := res.Data.Result[0].Value[1]
-//		fmt.Printf("Debug) countOverTimeValue: %v\n", scrapeOverTimeValue)
-		switch scrapeOverTimeValue.(type) {
-		case string:
-			scrapeOverTime, parseErr := strconv.ParseFloat(scrapeOverTimeValue.(string), 64)
-			if parseErr != nil {
-				log.Printf("Warn) parseErr\t%v\n", parseErr)
-			}
-			
-			// 15 seconds is the scrape interval from Prometheus configuration
-			criteria := config.InactivityDuration.Minutes() * 60 / prometheusScrapeInterval
-//			fmt.Printf("Debug) criteria: %v\n", criteria)
-			if scrapeOverTime < criteria {
-//				fmt.Println("Info) First time spawned, don't kill it!")
-
-//				fmt.Println("Info) just spawned, prevent from scaling")
-				return 1 // > 0: don't terminate it!
-			} else if scrapeOverTime == criteria {
-				requirement2 = true
-			}
-		}
-	}
-
-	// First spawned and idle for three minutes. can be scaled to zero
-	if requirement1 && requirement2 {
-		fmt.Println("Warn) First time spawned but idled 3 minutes, kill it!")
-		return 0
-	}
-
-	// Normal case (the original process)
-//	fmt.Println("Normal cases going on ... ")
-	querySt := url.QueryEscape(`sum(rate(gateway_function_invocation_total{function_name="` + function.Name + `", code=~".*"}[` + duration + `])) by (code, function_name)`)
-
-	res, err = query.Fetch(querySt)
-	if err != nil {
-		log.Println("Warn)", err)
-		return ivCount
-	}
-
-	if len(res.Data.Result) > 0 || function.InvocationCount == 0 {
-		// fmt.Printf("function.Name\t%v\n", function.Name)
-//		fmt.Printf("Debug) res.Data.Result: %v\n", res.Data.Result)
-//		fmt.Printf("Debug) InvocationCount: %v\n", function.InvocationCount)
-
-		for _, v := range res.Data.Result {
-
-			if writeDebug {
-				fmt.Println("Debug)", v)
-			}
-
-			if v.Metric.FunctionName == function.Name {
-				metricValue := v.Value[1]
-
-				switch metricValue.(type) {
-				case string:
-
-					f, strconvErr := strconv.ParseFloat(metricValue.(string), 64)
-					if strconvErr != nil {
-						log.Printf("Unable to convert value for metric: %s\n", strconvErr)
-						continue
-					}
-//					fmt.Printf("Debug) %s\t%v\n", function.Name, f)
-					ivCount += f
-				}
-			}
-		}
-	}
-
-//	fmt.Printf("Info) func: %s, ivCount: %v\n", function.Name, ivCount)
-
-	return ivCount
-}
-
 func reconcile(client *http.Client, config types.Config, credentials *Credentials) {
 	functions, err := queryFunctions(client, config.GatewayURL, credentials)
 
@@ -362,86 +223,55 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 		log.Println("Warn)", err)
 		return
 	}
-	fmt.Println ("Debug)", "function list fetched")
+	fmt.Println("Debug)", "function list fetched")
 
-	// double confirm for the sake of 15 second scrape buffering
 	for _, function := range functions {
 
-		// TODO:
-		// retvalBefore := testGateway()
+		fmt.Printf("Info) %v\n", function)
 
 		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
-			// fmt.Println("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-			// time.Sleep(time.Second * 3)
 
-			// TODO: directly check gateway metrics from CURL
+			// Criteria 1: skip thouse no lables
+			if function.Labels != nil {
+				labels := *function.Labels
+				labelValue := labels[scaleLabel]
 
-			// curl 10.43.225.85:8082/metrics | grep gateway_function_invocation_total | grep balance
-			retvalBefore := testGateway(function.Name)
-//			fmt.Println ("Debug)", function.Name, retvalBefore )
-
-//			var _output string = ""
-
-			ScaleConfirmCount := 0
-			for i := 0; i < 2; i++ {
-				// fmt.Println("------------------------------------------------------------------------------------------")
-				// fmt.Println("")
-				// fmt.Println("")
-				// fmt.Println("")
-				// fmt.Printf("Next function\t%v\n", function.Name)
-				// fmt.Println("**************** start point ", i)
-				// time.Sleep(time.Second * 5)
-				firstCheck := scaleCriteria(client, function, config, credentials)
-
-				// fmt.Println("------------------------\tFIRST round check\t", firstCheck)
-				// fmt.Println("**************** middle point ", i)
-				// fmt.Println("sleep 22 seconds .....")
-
-				time.Sleep(time.Second * prometheusScrapeInterval)
-
-				secondCheck := scaleCriteria(client, function, config, credentials)
-				// fmt.Println("------------------------\tSECOND round check\t", secondCheck)
-
-				replicaSize, _ := getReplicas(client, config.GatewayURL, function.Name, credentials)
-				if firstCheck == float64(0) && secondCheck == float64(0) && replicaSize.AvailableReplicas > 0 {
-
-					ScaleConfirmCount++
-					// time.Sleep(time.Second * 2)
-//					fmt.Printf("Debug) ScaleConfirmCount++: %v\t%v\n", ScaleConfirmCount, function.Name)
-
-				}
-
-				// fmt.Printf("ScaleConfirmCount: %v\n", ScaleConfirmCount)
-				// fmt.Println("**************** end point ", i)
-				time.Sleep(time.Second * prometheusScrapeInterval)
-
-			}
-
-			if ScaleConfirmCount == 2 {
-				if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-//					fmt.Printf("ScaleConfirmCount: %v\n", ScaleConfirmCount)
-//					fmt.Printf("SCALE\t%s\tTO ZERO ...\n", function.Name)
-					fmt.Printf("Debug) scale %s to 0 due to ScaleConfirmCount: %v\n", function.Name, ScaleConfirmCount)
-
-					// TODO:
-					retval := testGateway(function.Name)
-					fmt.Println ("Debug)", function.Name, retvalBefore, " => ", retval )
-
-					if retval == retvalBefore {
-						sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
-						fmt.Println ("Info)", function.Name, "scale to 0 due to ", retvalBefore, " = ", retval)
+				if labelValue != "1" && labelValue != "true" {
+					if writeDebug {
+						log.Printf("Skip: %s due to missing label\n", function.Name)
 					}
-
-//					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
-				} else {
-					fmt.Println("Info)", "IGNORE because replicas is 0 -------------------")
+					fmt.Printf("Info) %s is not labeled, skip the pod...\n", function.Name)
+					return
 				}
-			} else {
-				fmt.Println ("Info)", function.Name, "ignored due to ScaleConfirmCount:", ScaleConfirmCount)
 			}
+
+			// generate initial map
+			if _, ok := functionTouches[function.Name]; !ok {
+				functionTouches[function.Name] = -1
+			}
+			fmt.Printf("retvalCache\t%s\t%f\n", function.Name, functionTouches[function.Name])
+
+			if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
+				retvalBefore := 0.0
+				retvalAfter := 0.0
+
+				retvalBefore = gatewayFunctionInvocationTotal(function.Name)
+				fmt.Printf("1st check\t%s\t%f\t%f\n", function.Name, functionTouches[function.Name], retvalBefore)
+				// fmt.Printf("retvalBefore\tfunction.InvocationCount\t%f\t%f\n", retvalBefore, function.InvocationCount)
+				time.Sleep(config.InactivityDuration)
+				retvalAfter = gatewayFunctionInvocationTotal(function.Name)
+				fmt.Printf("2nd check\t%s\t%f\t%f\t%f\n", function.Name, functionTouches[function.Name], retvalBefore, retvalAfter)
+				// fmt.Printf("retvalAfter\tfunction.InvocationCount\t%f\t%f\n", retvalAfter, function.InvocationCount)
+				if retvalAfter == retvalBefore && retvalAfter == functionTouches[function.Name] {
+					// Idles InactivityDuration, scales to zero
+					fmt.Printf("**** SCALE TO ZERO *****\t%v\tvalMap\tretvalBefore\tretvalAfter\t%v\t%v\t%v\n", function.Name, functionTouches[function.Name], retvalBefore, retvalAfter)
+					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
+				}
+			}
+
+			functionTouches[function.Name] = gatewayFunctionInvocationTotal(function.Name)
 
 		}(client, function, config, credentials)
-
 	}
 }
 
