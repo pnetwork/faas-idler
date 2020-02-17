@@ -13,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openfaas-incubator/faas-idler/types"
@@ -29,6 +30,9 @@ var dryRun bool
 var writeDebug bool
 
 var functionTouches = make(map[string]float64)
+
+// var firstChecks = make(map[string]float64)
+// var secondChecks = make(map[string]float64)
 
 type Credentials struct {
 	Username string
@@ -91,7 +95,6 @@ reconcile_interval: %s
 	for {
 		fmt.Println("===== started =====")
 		reconcile(client, config, &credentials)
-		fmt.Println("ONE ROUND OVER ===================================== ")
 		time.Sleep(config.ReconcileInterval)
 	}
 }
@@ -225,12 +228,15 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 	}
 	fmt.Println("Debug)", "function list fetched")
 
+	var wg sync.WaitGroup
 	for _, function := range functions {
 
 		fmt.Printf("Info) %v\n", function)
+		wg.Add(1)
 
-		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials) {
+		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials, wg *sync.WaitGroup) {
 
+			defer wg.Done()
 			// Criteria 1: skip thouse no lables
 			if function.Labels != nil {
 				labels := *function.Labels
@@ -245,34 +251,41 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 				}
 			}
 
+			// layout := "January 02, 2006 Mon 3:04:05 PM MST"
+			layout := "2006-01-02 03:04:05 PM"
+
 			// generate initial map
 			if _, ok := functionTouches[function.Name]; !ok {
 				functionTouches[function.Name] = -1
 			}
-			fmt.Printf("retvalCache\t%s\t%f\n", function.Name, functionTouches[function.Name])
+			fmt.Printf("%v\tlastCache\t%s\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name])
 
 			if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
-				retvalBefore := 0.0
-				retvalAfter := 0.0
 
-				retvalBefore = gatewayFunctionInvocationTotal(function.Name)
-				fmt.Printf("1st check\t%s\t%f\t%f\n", function.Name, functionTouches[function.Name], retvalBefore)
-				// fmt.Printf("retvalBefore\tfunction.InvocationCount\t%f\t%f\n", retvalBefore, function.InvocationCount)
-				time.Sleep(config.InactivityDuration)
-				retvalAfter = gatewayFunctionInvocationTotal(function.Name)
-				fmt.Printf("2nd check\t%s\t%f\t%f\t%f\n", function.Name, functionTouches[function.Name], retvalBefore, retvalAfter)
-				// fmt.Printf("retvalAfter\tfunction.InvocationCount\t%f\t%f\n", retvalAfter, function.InvocationCount)
-				if retvalAfter == retvalBefore && retvalAfter == functionTouches[function.Name] {
+				firstCheck := gatewayFunctionInvocationTotal(function.Name)
+				fmt.Printf("%v\t1st check\t%s\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck)
+
+				time.Sleep(config.InactivityDuration / 2)
+
+				secondCheck := gatewayFunctionInvocationTotal(function.Name)
+				fmt.Printf("%v\t2nd check\t%s\t%f\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck, secondCheck)
+
+				if secondCheck == firstCheck && secondCheck == functionTouches[function.Name] {
 					// Idles InactivityDuration, scales to zero
-					fmt.Printf("**** SCALE TO ZERO *****\t%v\tvalMap\tretvalBefore\tretvalAfter\t%v\t%v\t%v\n", function.Name, functionTouches[function.Name], retvalBefore, retvalAfter)
+					fmt.Printf("**** SCALE TO ZERO *****\t%v\tvalMap\tretvalBefore\tretvalAfter\t%v\t%v\t%v\n", function.Name, functionTouches[function.Name], firstCheck, secondCheck)
 					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				}
 			}
 
+			// update cache with latest check value
 			functionTouches[function.Name] = gatewayFunctionInvocationTotal(function.Name)
 
-		}(client, function, config, credentials)
+		}(client, function, config, credentials, &wg)
 	}
+
+	wg.Wait()
+	fmt.Println("all functions are done...")
+	fmt.Println("ONE ROUND OVER ===================================== ")
 }
 
 func getReplicas(client *http.Client, gatewayURL string, name string, credentials *Credentials) (*providerTypes.FunctionStatus, error) {
