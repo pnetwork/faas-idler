@@ -95,7 +95,7 @@ reconcile_interval: %s
 	for {
 		fmt.Println("===== started =====")
 		reconcile(client, config, &credentials)
-		time.Sleep(config.ReconcileInterval)
+		// time.Sleep(config.ReconcileInterval)
 	}
 }
 
@@ -107,6 +107,7 @@ func Get(url string) (int, []byte) {
 	}
 	defer _res.Body.Close()
 	_bytes, err := ioutil.ReadAll(_res.Body)
+
 	if err != nil {
 		fmt.Printf("ReadAll error\t%v", err)
 	}
@@ -265,7 +266,7 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 				firstCheck := gatewayFunctionInvocationTotal(function.Name)
 				fmt.Printf("%v\t1st check\t%s\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck)
 
-				time.Sleep(config.InactivityDuration / 2)
+				time.Sleep(config.InactivityDuration)
 
 				secondCheck := gatewayFunctionInvocationTotal(function.Name)
 				fmt.Printf("%v\t2nd check\t%s\t%f\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck, secondCheck)
