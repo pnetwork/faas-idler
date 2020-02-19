@@ -230,6 +230,7 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 	fmt.Println("Debug)", "function list fetched")
 
 	var wg sync.WaitGroup
+	// wg.Add(len(functions))
 	for _, function := range functions {
 
 		fmt.Printf("Info) %v\n", function)
@@ -257,9 +258,11 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 			// generate initial map
 			if _, ok := functionTouches[function.Name]; !ok {
-				functionTouches[function.Name] = -1
+				// functionTouches[function.Name] = -1
+				functionTouches[function.Name] = gatewayFunctionInvocationTotal(function.Name)
+				fmt.Printf("Cache Init\t%v\tlastCache\t%s\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name])
+				return
 			}
-			fmt.Printf("%v\tlastCache\t%s\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name])
 
 			if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
 
@@ -276,10 +279,13 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 					fmt.Printf("**** SCALE TO ZERO *****\t%v\tvalMap\tretvalBefore\tretvalAfter\t%v\t%v\t%v\n", function.Name, functionTouches[function.Name], firstCheck, secondCheck)
 					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				}
+			} else {
+				time.Sleep(config.InactivityDuration)
 			}
 
 			// update cache with latest check value
 			functionTouches[function.Name] = gatewayFunctionInvocationTotal(function.Name)
+			fmt.Printf("Update\t%v\tlastCache\t%s\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name])
 
 		}(client, function, config, credentials, &wg)
 	}
