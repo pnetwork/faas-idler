@@ -101,17 +101,20 @@ reconcile_interval: %s
 
 // Get RESTful get
 func Get(url string) (int, []byte) {
-	_res, err := http.Get(url)
+	var err error
+	var body []byte
+	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("httpGet error\t%v", err)
+		// clean up and return the function
+		return 0, body
 	}
-	defer _res.Body.Close()
-	_bytes, err := ioutil.ReadAll(_res.Body)
-
+	defer resp.Body.Close()
+	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("ReadAll error\t%v", err)
 	}
-	return _res.StatusCode, _bytes
+	return resp.StatusCode, body
 }
 
 func gatewayFunctionInvocationTotal(functionName string) float64 {
@@ -121,10 +124,9 @@ func gatewayFunctionInvocationTotal(functionName string) float64 {
 	_url := "http://gateway-metrics:8082/metrics"
 	//	_url = "http://localhost:8082/metrics"
 	//	fmt.Println(_url)
-
-	_, _dataStr := Get(_url)
+	_, dataStr := Get(_url)
 	//	fmt.Println(string(_dataStr))
-	_data := strings.Split(string(_dataStr), "\n")
+	_data := strings.Split(string(dataStr), "\n")
 
 	var _sum int
 	_sum = 0
@@ -237,7 +239,6 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 		wg.Add(1)
 
 		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials, wg *sync.WaitGroup) {
-
 			defer wg.Done()
 			// Criteria 1: skip thouse no lables
 			if function.Labels != nil {
@@ -246,7 +247,8 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 				if labelValue != "1" && labelValue != "true" {
 					if writeDebug {
-						log.Printf("Skip: %s due to missing label\n", function.Name)
+						// log.Printf("Skip: %s due to missing label\n", function.Name)
+						fmt.Printf("Skip: %s due to missing label\n", function.Name)
 					}
 					fmt.Printf("Info) %s is not labeled, skip the pod...\n", function.Name)
 					return
