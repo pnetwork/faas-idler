@@ -229,13 +229,13 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 		log.Println("Warn)", err)
 		return
 	}
-	fmt.Println("Debug)", "function list fetched")
+	// fmt.Println("Debug)", "function list fetched")
 
 	var wg sync.WaitGroup
 	// wg.Add(len(functions))
 	for _, function := range functions {
 
-		fmt.Printf("Info) %v\n", function)
+		// fmt.Printf("Info) %v\n", function)
 		wg.Add(1)
 
 		go func(client *http.Client, function providerTypes.FunctionStatus, config types.Config, credentials *Credentials, wg *sync.WaitGroup) {
@@ -247,10 +247,10 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 				if labelValue != "1" && labelValue != "true" {
 					if writeDebug {
-						// log.Printf("Skip: %s due to missing label\n", function.Name)
-						fmt.Printf("Skip: %s due to missing label\n", function.Name)
+						log.Printf("Skip: %s due to missing label\n", function.Name)
+						// fmt.Printf("Skip: %s due to missing label\n", function.Name)
 					}
-					fmt.Printf("Info) %s is not labeled, skip the pod...\n", function.Name)
+					// fmt.Printf("Info) %s is not labeled, skip the pod...\n", function.Name)
 					return
 				}
 			}
@@ -269,16 +269,16 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 			if val, _ := getReplicas(client, config.GatewayURL, function.Name, credentials); val != nil && val.AvailableReplicas > 0 {
 
 				firstCheck := gatewayFunctionInvocationTotal(function.Name)
-				fmt.Printf("%v\t1st check\t%s\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck)
+				// fmt.Printf("%v\t1st check\t%s\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck)
 
 				time.Sleep(config.InactivityDuration)
 
 				secondCheck := gatewayFunctionInvocationTotal(function.Name)
-				fmt.Printf("%v\t2nd check\t%s\t%f\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck, secondCheck)
+				// fmt.Printf("%v\t2nd check\t%s\t%f\t%f\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name], firstCheck, secondCheck)
 
 				if secondCheck == firstCheck && secondCheck == functionTouches[function.Name] {
 					// Idles InactivityDuration, scales to zero
-					fmt.Printf("**** SCALE TO ZERO *****\t%v\tvalMap\tretvalBefore\tretvalAfter\t%v\t%v\t%v\n", function.Name, functionTouches[function.Name], firstCheck, secondCheck)
+					// fmt.Printf("**** SCALE TO ZERO *****\t%v\tvalMap\tretvalBefore\tretvalAfter\t%v\t%v\t%v\n", function.Name, functionTouches[function.Name], firstCheck, secondCheck)
 					sendScaleEvent(client, config.GatewayURL, function.Name, uint64(0), credentials)
 				}
 			} else {
@@ -287,14 +287,14 @@ func reconcile(client *http.Client, config types.Config, credentials *Credential
 
 			// update cache with latest check value
 			functionTouches[function.Name] = gatewayFunctionInvocationTotal(function.Name)
-			fmt.Printf("Update\t%v\tlastCache\t%s\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name])
+			// fmt.Printf("Update\t%v\tlastCache\t%s\t%f\n", time.Now().Format(layout), function.Name, functionTouches[function.Name])
 
 		}(client, function, config, credentials, &wg)
 	}
 
 	wg.Wait()
-	fmt.Println("all functions are done...")
-	fmt.Println("ONE ROUND OVER ===================================== ")
+	// fmt.Println("all functions are done...")
+	// fmt.Println("ONE ROUND OVER ===================================== ")
 }
 
 func getReplicas(client *http.Client, gatewayURL string, name string, credentials *Credentials) (*providerTypes.FunctionStatus, error) {
