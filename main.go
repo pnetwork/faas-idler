@@ -93,7 +93,7 @@ reconcile_interval: %s
 	}
 
 	for {
-		fmt.Println("===== started =====")
+		// fmt.Println("===== started =====")
 		reconcile(client, config, &credentials)
 		// time.Sleep(config.ReconcileInterval)
 	}
